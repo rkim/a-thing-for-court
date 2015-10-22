@@ -16,6 +16,7 @@
 require 'fileutils'
 
 READ_DIR = "./test"
+BIN_DIR = "./bin"
 OUTPUT_DIR = "~/Music/Converted"
 BIT_RATE = "320k"
 
@@ -55,7 +56,7 @@ PATTERN = /^(\._\d|_\d|\.d|\d)/
 #
 #
 def get_all_files(dir)
-  files = Dir[ File.join(".", '**', '*') ].reject { |p| File.directory? p }
+  files = Dir[ File.join(dir, '**', '.*'), File.join(dir, '**', '*')].reject { |p| File.directory? p }
 end
 
 #
@@ -167,10 +168,17 @@ def convert_files_to_dest(files_to_convert)
 
     # Execute conversion
     begin
-      command = "ffmpeg -i \"#{f}\" -ab #{BIT_RATE} -map_metadata 0 \"#{dest_file}\"";
+      # Ensure the directory for the output file exists
+      FileUtils.mkdir_p(dest_path)
+
+      # Convert!
+      command = "#{BIN_DIR}/ffmpeg -i \"#{f}\" -ab #{BIT_RATE} -map_metadata 0 \"#{dest_file}\"";
       print command + "\n"
+      result = %x[ #{command} ]
+      print result
     rescue
 
+      puts "ERROR"
     end
 
     # Output results and continue
