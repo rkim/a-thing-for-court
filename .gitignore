@@ -1,0 +1,2 @@
+# Ignore subdirectories under /test
+test/**
