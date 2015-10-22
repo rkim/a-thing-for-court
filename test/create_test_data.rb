@@ -10,6 +10,7 @@
 #
 # Script to mock Court's music directory structure so I can run tests locally.
 #
+# -----------------------------------------------------------------------------
 
 require 'fileutils'
 
