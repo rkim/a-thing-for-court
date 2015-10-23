@@ -19,6 +19,7 @@ DEBUG = false
 
 READ_DIR = "../"
 BIN_DIR = "./bin"
+WORKING_DIR = "./tmp"
 OUTPUT_DIR = "~/Music/Converted"
 ERROR_DIR = "~/Music/Errors"
 
@@ -61,9 +62,6 @@ COPY_FORMATS = [
   # ".band"
 ]
 
-# Audio files in Court's music directory match the following regex pattern
-PATTERN = /^(\._\d|_\d|\.d|\d)/
-
 #
 #
 def get_all_files(dir)
@@ -80,14 +78,6 @@ end
 #
 def get_files_to_copy(files)
   non_music_files = files.select{|f| COPY_FORMATS.any?{|fmt| f.include? fmt}}
-end
-
-#
-#
-def setup_for_processing
-  # Make sure the output directory is present
-  path = File.expand_path(OUTPUT_DIR)
-  FileUtils.mkdir_p(path)
 end
 
 #
@@ -111,7 +101,6 @@ def get_destination_path(full_path, output_path = OUTPUT_DIR)
   path = File.expand_path(output_path) + "/" + path
   File.expand_path(path)
 end
-
 
 #
 #
@@ -157,7 +146,7 @@ end
 #
 #
 def copy_files_to_dest(files_to_copy)
-  puts "============================"
+  puts "\n\n============================"
   puts "=                          ="
   puts "= Copying files...         ="
   puts "=                          ="
@@ -176,6 +165,7 @@ def copy_files_to_dest(files_to_copy)
 
     if File.file?(dest_file)
       print "  -- File already exists...skipping"
+      @skipped << f
     elsif !DEBUG
       FileUtils.mkdir_p(dest_path)
       FileUtils.cp(f, dest_path)
@@ -187,6 +177,7 @@ def copy_files_to_dest(files_to_copy)
     sleep 0.01
 
     processed += 1
+    @copied << f
   end
 
 end
@@ -194,9 +185,7 @@ end
 #
 #
 def convert_files_to_dest(files_to_convert)
-  failed = []
-
-  puts "============================"
+  puts "\n\n============================"
   puts "=                          ="
   puts "= Converting...            ="
   puts "=                          ="
@@ -220,7 +209,7 @@ def convert_files_to_dest(files_to_convert)
       file_type_index = SUPPORTED_FORMATS.map{|fmt| file_name.rindex fmt}.compact.uniq.first
       raise if file_type_index.nil?
     rescue
-      failed << f
+      @failed << f
       puts "\nERROR: Failed to parse file #{f}\n"
     end
     dest_file = dest_path + "/" + file_name[0...file_type_index] + CONVERT_TO
@@ -233,7 +222,7 @@ def convert_files_to_dest(files_to_convert)
     if File.file?(dest_file)
       puts "File already exists...skipping"
       puts "............................\n"
-    
+      @skipped << f
     # Else, convert the file
     else
       begin
@@ -241,7 +230,8 @@ def convert_files_to_dest(files_to_convert)
         FileUtils.mkdir_p(dest_path)
 
         # Convert!
-        command = "#{BIN_DIR}/ffmpeg -i \"#{f}\" -ab #{BIT_RATE} -id3v2_version 3 \"#{dest_file}\"";
+        temp_file = File.expand_path(WORKING_DIR) + "/tmp" + CONVERT_TO
+        command = "#{BIN_DIR}/ffmpeg -i \"#{f}\" -ab #{BIT_RATE} -id3v2_version 3 \"#{temp_file}\"";
         puts command
         puts "............................\n"
 
@@ -250,8 +240,13 @@ def convert_files_to_dest(files_to_convert)
           print result
         end
       rescue
-        failed << f
+        @failed << f
         puts "\nERROR: Failed to convert file #{f}\n"
+      
+      else
+        # Move temp file to destination path
+        FileUtils.mv(temp_file, dest_file)
+        @converted << f
       end
     end
 
@@ -259,31 +254,70 @@ def convert_files_to_dest(files_to_convert)
     sleep 0.01
     processed += 1
   end
+end
 
-  failed
+#
+#
+def setup
+  # Make sure the output directory is present
+  output_path = File.expand_path(OUTPUT_DIR)
+  FileUtils.mkdir_p(output_path)
+
+  # Make sure the temp directory is present
+  working_path = File.expand_path(WORKING_DIR)
+  FileUtils.mkdir_p(working_path)
+
+  true
+end
+
+
+def teardown
+  # Delete working directory and it's contents
+  working_path = File.expand_path(WORKING_DIR)
+  FileUtils.rm_rf(working_path)
+
+  true
+end
+
+def summary
+  puts "\n\n"
+  puts "============================"
+  puts "= Processing complete!     ="
+  puts "============================\n\n"
+  print "Converted: #{@converted.length}\n"
+  print "Copied:    #{@copied.length}\n"
+  print "Skipped:   #{@skipped.length}\n"
+  print "Failed:    #{@failed.length}\n\n"
 end
 
 #
 #
 def run
+  # Kinda dirty, but Court will never know...
+  @converted = []
+  @copied = []
+  @skipped = []
+  @failed = []
+
   all_files = get_all_files(READ_DIR)
   music_files = get_files_to_convert(all_files)
   non_music_files = get_files_to_copy(all_files)
 
-  setup_for_processing
-
-  failed = []
+  setup
   if non_music_files && non_music_files.length > 0
     copy_files_to_dest(non_music_files)
   end
 
   if music_files && music_files.length > 0
-    failed = convert_files_to_dest(music_files)
+    convert_files_to_dest(music_files)
   end
 
-  if failed && failed.length > 0
-    handle_errors(failed)
+  if @failed.length > 0
+    handle_errors(@failed)
   end
+
+  teardown
+  summary
 end
 
 run
