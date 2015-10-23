@@ -15,9 +15,13 @@
 
 require 'fileutils'
 
+# -------------------------------------
+# Globals
+# -------------------------------------
+
 DEBUG = false
 
-READ_DIR = "../"
+READ_DIR = ARGV[0] == "--packaged" ? "../../../" : "../"
 BIN_DIR = "./bin"
 WORKING_DIR = "./tmp"
 OUTPUT_DIR = "~/Music/Converted"
@@ -62,55 +66,65 @@ COPY_FORMATS = [
   # ".band"
 ]
 
+
+# -------------------------------------
+# 
 #
+# -------------------------------------
+
 #
-def get_all_files(dir)
-  files = Dir[ File.join(dir, '**', '.*'), File.join(dir, '**', '*')].reject { |p| File.directory? p }
+# Returns an array of all file paths in the specified directory and its
+# sub-directories
+def get_all_files_in_directory(dir)
+  return [] if dir.nil?
+  files = Dir[File.join(dir, '**', '.*'), File.join(dir, '**', '*')].reject{|p| File.directory? p}
 end
 
 #
-#
+# Returns an array of all file paths of convertible audio files
 def get_files_to_convert(files)
+  return [] if files.nil? || files.empty?
   music_files = files.select{|f| SUPPORTED_FORMATS.any?{|fmt| f.include? fmt}}
 end
 
 #
-#
+# Returns an array of all file paths of copyable files
 def get_files_to_copy(files)
+  return [] if files.nil? || files.empty?
   non_music_files = files.select{|f| COPY_FORMATS.any?{|fmt| f.include? fmt}}
 end
 
 #
 #
-def get_destination_path(full_path, output_path = OUTPUT_DIR)
+def get_destination_dir(full_path, output = OUTPUT_DIR)
   path = nil
   
-  # 1. Remove READ_DIR from the path
+  # Remove READ_DIR from the path
   if full_path.index(READ_DIR) == 0
-    start_index = READ_DIR.length
-    end_index = full_path.length
+    i = READ_DIR.length
+    j = full_path.length
 
-    path = full_path[start_index...end_index]
+    path = full_path[i...j]
   end
 
-  # 2. Find the path
-  index = path.rindex(/\//)
-  path = path[0...index]
+  # Remove file name from the path
+  i = path.rindex(/\//)
+  dir = i >= 0 ? path[0...i] : path
 
-  # 3. Expand output_path and concatenate
-  path = File.expand_path(output_path) + "/" + path
-  File.expand_path(path)
+  # Expand build and sanitize destination directory
+  dir = File.expand_path(output) + "/" + dir
+  File.expand_path(dir)
 end
 
 #
 #
-def get_filename(full_path)
-  # 2. Find the path
-  start_index = 1 + full_path.rindex(/\//)
-  end_index = full_path.length
+def get_file_name(full_path)
+  i = 1 + full_path.rindex(/\//)
+  j = full_path.length
 
-  file_name = full_path[start_index...end_index]
+  file_name = i > 0 ? full_path[i...j] : full_path
 end
+
 
 #
 #
@@ -125,15 +139,15 @@ def handle_errors(errors)
   total_files = errors.length
 
   errors.each do |f|
-    dest_path = get_destination_path(f, ERROR_DIR)
-    file_name = get_filename(f)
+    dest_dir = get_destination_dir(f, ERROR_DIR)
+    file_name = get_file_name(f)
 
     print "[ #{processed} / #{total_files} ] :  "
-    print dest_path + "/" + file_name + "\r\n"
+    print dest_dir + "/" + file_name + "\r\n"
 
     if !DEBUG
-      FileUtils.mkdir_p(dest_path)
-      FileUtils.cp(f, dest_path)
+      FileUtils.mkdir_p(dest_dir)
+      FileUtils.cp(f, dest_dir)
     end
 
     $stdout.flush
@@ -156,19 +170,19 @@ def copy_files_to_dest(files_to_copy)
   total_files = files_to_copy.length
 
   files_to_copy.each do |f|
-    dest_path = get_destination_path(f)
-    file_name = get_filename(f)
-    dest_file = dest_path + "/" + file_name
+    dest_dir = get_destination_dir(f)
+    file_name = get_file_name(f)
+    dest_path = dest_dir + "/" + file_name
 
     print "[ #{processed} / #{total_files} ] :  "
-    print dest_file
+    print dest_path
 
-    if File.file?(dest_file)
+    if File.file?(dest_path)
       print "  -- File already exists...skipping"
       @skipped << f
     elsif !DEBUG
-      FileUtils.mkdir_p(dest_path)
-      FileUtils.cp(f, dest_path)
+      FileUtils.mkdir_p(dest_dir)
+      FileUtils.cp(f, dest_dir)
     end
 
     print "\r\n"
@@ -195,13 +209,17 @@ def convert_files_to_dest(files_to_convert)
   total_files = files_to_convert.length
 
   files_to_convert.each do |f|
-
+    
     # Extract parts from full file path
-    dest_path = get_destination_path(f)
-    file_name = get_filename(f)
-    next if dest_path.nil? || file_name.nil?
+    dest_dir = get_destination_dir(f)
+    file_name = get_file_name(f)
+    if dest_dir.nil? || file_name.nil?
+      @failed << f
+      puts "\nERROR: Failed to parse file #{f}\n"
+      next
+    end
 
-    # Let's also do a bit of work here to rename hidden files
+    # Let's rename any 'hidden' audio files
     file_name[0] = "_" if file_name[0] == "."
 
     # Construct new path and file name (with the appropriate file type).
@@ -212,22 +230,23 @@ def convert_files_to_dest(files_to_convert)
       @failed << f
       puts "\nERROR: Failed to parse file #{f}\n"
     end
-    dest_file = dest_path + "/" + file_name[0...file_type_index] + CONVERT_TO
+    dest_path = dest_dir + "/" + file_name[0...file_type_index] + CONVERT_TO
 
     puts "\n............................"
     print "[ #{processed} / #{total_files} ] :  "
     print f + "\r\n"
 
     # Skip if file already exists at the destination
-    if File.file?(dest_file)
+    if File.file?(dest_path)
       puts "File already exists...skipping"
       puts "............................\n"
       @skipped << f
+
     # Else, convert the file
     else
       begin
         # Ensure the directory for the output file exists
-        FileUtils.mkdir_p(dest_path)
+        FileUtils.mkdir_p(dest_dir)
 
         # Convert!
         temp_file = File.expand_path(WORKING_DIR) + "/tmp" + CONVERT_TO
@@ -244,8 +263,8 @@ def convert_files_to_dest(files_to_convert)
         puts "\nERROR: Failed to convert file #{f}\n"
       
       else
-        # Move temp file to destination path
-        FileUtils.mv(temp_file, dest_file)
+        # Conversion complete, move temp file to destination path
+        FileUtils.mv(temp_file, dest_path)
         @converted << f
       end
     end
@@ -257,28 +276,28 @@ def convert_files_to_dest(files_to_convert)
 end
 
 #
-#
+# Make sure the output and working directories are present
 def setup
-  # Make sure the output directory is present
-  output_path = File.expand_path(OUTPUT_DIR)
-  FileUtils.mkdir_p(output_path)
+  output_dir = File.expand_path(OUTPUT_DIR)
+  FileUtils.mkdir_p(output_dir)
 
-  # Make sure the temp directory is present
-  working_path = File.expand_path(WORKING_DIR)
-  FileUtils.mkdir_p(working_path)
+  working_dir = File.expand_path(WORKING_DIR)
+  FileUtils.mkdir_p(working_dir)
 
   true
 end
 
-
+#
+# Deletes temporary files and directories
 def teardown
-  # Delete working directory and it's contents
-  working_path = File.expand_path(WORKING_DIR)
-  FileUtils.rm_rf(working_path)
+  working_dir = File.expand_path(WORKING_DIR)
+  FileUtils.rm_rf(working_dir)
 
   true
 end
 
+#
+# Displays a summary of files processed
 def summary
   puts "\n\n"
   puts "============================"
@@ -290,29 +309,32 @@ def summary
   print "Failed:    #{@failed.length}\n\n"
 end
 
+
 #
-#
-def run
+# Entry point for execution
+def main
+  
   # Kinda dirty, but Court will never know...
   @converted = []
   @copied = []
   @skipped = []
   @failed = []
 
-  all_files = get_all_files(READ_DIR)
+  all_files = get_all_files_in_directory(READ_DIR)
   music_files = get_files_to_convert(all_files)
   non_music_files = get_files_to_copy(all_files)
 
   setup
-  if non_music_files && non_music_files.length > 0
+
+  if !non_music_files.empty?
     copy_files_to_dest(non_music_files)
   end
 
-  if music_files && music_files.length > 0
+  if !music_files.empty?
     convert_files_to_dest(music_files)
   end
 
-  if @failed.length > 0
+  if !@failed.empty?
     handle_errors(@failed)
   end
 
@@ -320,5 +342,5 @@ def run
   summary
 end
 
-run
+main
 
